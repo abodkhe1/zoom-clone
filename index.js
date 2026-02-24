@@ -4,6 +4,7 @@ const http = require('http');
 const socketIo = require('socket.io');
 const cors = require('cors');
 const path = require('path');
+const fs = require('fs'); // Added for file system checks
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 
 const authRoutes = require('./routes/auth');
@@ -14,9 +15,11 @@ const Meeting = require('./models/Meeting');
 const app = express();
 const server = http.createServer(app);
 
-// ✅ FIXED CORS CONFIGURATION
+// ✅ PRODUCTION-READY CORS CONFIGURATION
 const corsOptions = {
-  origin: ['http://localhost:3000', 'http://127.0.0.1:3000'],
+  origin: process.env.NODE_ENV === 'production' 
+    ? [process.env.CLIENT_URL || 'https://zoom-clone-3-uibx.onrender.com'] 
+    : ['http://localhost:3000', 'http://127.0.0.1:3000'],
   credentials: true,
   optionsSuccessStatus: 200,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -27,9 +30,13 @@ app.use(cors(corsOptions));
 
 // Handle preflight requests
 app.options('/*path', cors(corsOptions));
+
+// ✅ Socket.IO with production CORS
 const io = socketIo(server, {
   cors: {
-    origin: ['http://localhost:3000', 'http://127.0.0.1:3000'],
+    origin: process.env.NODE_ENV === 'production'
+      ? [process.env.CLIENT_URL || 'https://zoom-clone-3-uibx.onrender.com']
+      : ['http://localhost:3000', 'http://127.0.0.1:3000'],
     methods: ["GET", "POST"],
     credentials: true,
     allowedHeaders: ["Content-Type", "Authorization"]
@@ -77,16 +84,18 @@ app.use((req, res, next) => {
   next();
 });
 
-// Routes
+// ✅ API Routes (these come BEFORE static files)
 app.use('/api/auth', authRoutes);
 app.use('/api/meetings', meetingRoutes);
 app.use('/api/host', hostRoutes);
 
+// Health check endpoint
 app.get('/api/health', (req, res) => {
   res.json({ 
     status: 'OK', 
     message: 'Server is running',
-    mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected'
+    mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+    environment: process.env.NODE_ENV || 'development'
   });
 });
 
@@ -110,6 +119,43 @@ app.get('/api/test-db', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
+// ✅ SERVE STATIC FILES FROM REACT BUILD FOLDER
+// This section is NEW - add it here
+const buildPath = path.join(__dirname, 'build');
+console.log(`📁 Checking for static files at: ${buildPath}`);
+
+// Check if build folder exists
+if (fs.existsSync(buildPath)) {
+  console.log('✅ Build folder found, serving static files');
+  
+  // Serve static files from build folder
+  app.use(express.static(buildPath));
+  
+  // Check if index.html exists
+  const indexPath = path.join(buildPath, 'index.html');
+  if (fs.existsSync(indexPath)) {
+    console.log('✅ index.html found, will serve React app for all non-API routes');
+    
+    // ✅ Catch-all route to serve React app for any non-API routes
+    app.get('*', (req, res, next) => {
+      // Skip API routes
+      if (req.path.startsWith('/api/')) {
+        return next();
+      }
+      // Serve index.html for all other routes (client-side routing)
+      res.sendFile(indexPath);
+    });
+  } else {
+    console.error('❌ index.html NOT found in build folder');
+  }
+} else {
+  console.error('❌ Build folder NOT found at:', buildPath);
+  console.log('📝 Make sure to:');
+  console.log('   1. Run "npm run build" in your React app');
+  console.log('   2. Copy the build folder to this backend directory');
+  console.log('   3. Or set up a build script to do this automatically');
+}
 
 // Store users in rooms
 const users = {};
@@ -314,4 +360,5 @@ const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`📱 Client URL: ${process.env.CLIENT_URL || 'http://localhost:3000'}`);
+  console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
 });
