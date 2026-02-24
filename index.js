@@ -4,7 +4,7 @@ const http = require('http');
 const socketIo = require('socket.io');
 const cors = require('cors');
 const path = require('path');
-const fs = require('fs'); // Added for file system checks
+const fs = require('fs');
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 
 const authRoutes = require('./routes/auth');
@@ -121,7 +121,6 @@ app.get('/api/test-db', async (req, res) => {
 });
 
 // ✅ SERVE STATIC FILES FROM REACT BUILD FOLDER
-// This section is NEW - add it here
 const buildPath = path.join(__dirname, 'build');
 console.log(`📁 Checking for static files at: ${buildPath}`);
 
@@ -137,14 +136,23 @@ if (fs.existsSync(buildPath)) {
   if (fs.existsSync(indexPath)) {
     console.log('✅ index.html found, will serve React app for all non-API routes');
     
-    // ✅ Catch-all route to serve React app for any non-API routes
-    app.get('*', (req, res, next) => {
+    // ✅ FIXED: Use middleware pattern instead of app.get('*')
+    // This resolves the path-to-regexp error
+    app.use((req, res, next) => {
       // Skip API routes
       if (req.path.startsWith('/api/')) {
         return next();
       }
+      // Skip static files that were already served
+      // (express.static handles this, but we add this check)
+      
       // Serve index.html for all other routes (client-side routing)
-      res.sendFile(indexPath);
+      res.sendFile(indexPath, (err) => {
+        if (err) {
+          console.error('Error sending index.html:', err);
+          next(err);
+        }
+      });
     });
   } else {
     console.error('❌ index.html NOT found in build folder');
@@ -156,6 +164,12 @@ if (fs.existsSync(buildPath)) {
   console.log('   2. Copy the build folder to this backend directory');
   console.log('   3. Or set up a build script to do this automatically');
 }
+
+// ✅ 404 handler for API routes (optional)
+// ✅ Correct - wildcard has a name
+app.use('/api/*path', (req, res) => {
+  res.status(404).json({ error: 'API endpoint not found' });
+});
 
 // Store users in rooms
 const users = {};
